@@ -1,0 +1,25 @@
+{
+  "feishu": {
+    "baseToken": "",
+    "tableId": "",
+    "viewId": "",
+    "identity": "auto",
+    "fieldMap": {
+      "creatorName": "博主名字",
+      "creatorUrl": "博主主页链接",
+      "shopUrl": "店铺链接",
+      "productTitle": "商品标题",
+      "sales": "商品销量",
+      "price": "商品价格",
+      "productUrl": "商品链接",
+      "collectedAt": "采集时间"
+    }
+  },
+  "collector": {
+    "maxScrollRounds": 40,
+    "stableRounds": 5,
+    "dryRun": false,
+    "useBrowserFallback": false,
+    "requestDelayMs": 3000
+  }
+}
