@@ -5,6 +5,69 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const larkCliRunner = "/usr/local/lib/node_modules/@larksuite/cli/scripts/run.js";
+const requiredFeishuScopes = [
+  "base:field:read",
+  "base:record:read",
+  "base:record:create",
+  "base:record:update",
+  "base:record:delete",
+].join(" ");
+
+let activeAuthorization = null;
+
+export async function startFeishuUserAuthorization(callbacks = {}) {
+  if (activeAuthorization) {
+    return {
+      verificationUrl: activeAuthorization.verificationUrl,
+      expiresIn: activeAuthorization.expiresIn,
+      pending: true,
+    };
+  }
+
+  let started;
+  try {
+    const result = await runLarkCommand([
+      "auth",
+      "login",
+      "--scope",
+      requiredFeishuScopes,
+      "--no-wait",
+      "--json",
+    ], { timeout: 30000 });
+    started = parseJson(result.stdout);
+  } catch (error) {
+    throw new Error(explainAuthError(error));
+  }
+
+  if (!started.device_code || !started.verification_url) {
+    throw new Error("飞书没有返回有效的授权链接，请稍后重试");
+  }
+
+  const authorization = {
+    verificationUrl: started.verification_url,
+    expiresIn: Number(started.expires_in) || 600,
+  };
+  activeAuthorization = authorization;
+
+  void (async () => {
+    try {
+      await runLarkCommand([
+        "auth",
+        "login",
+        "--device-code",
+        started.device_code,
+        "--json",
+      ], { timeout: (authorization.expiresIn + 30) * 1000 });
+      await callbacks.onComplete?.();
+    } catch (error) {
+      await callbacks.onError?.(new Error(explainAuthError(error)));
+    } finally {
+      if (activeAuthorization === authorization) activeAuthorization = null;
+    }
+  })();
+
+  return { ...authorization, pending: true };
+}
 
 export async function testFeishuConnection(config) {
   ensureFeishuConfig(config);
@@ -159,18 +222,20 @@ function ensureFeishuConfig(config) {
 
 async function runLark(args, config) {
   try {
-    const command = existsSync(larkCliRunner) ? findNodeExecutable() : "lark-cli";
     const commandArgs = withIdentity(args, config);
-    const finalArgs = existsSync(larkCliRunner) ? [larkCliRunner, ...commandArgs] : commandArgs;
-    return await execFileAsync(command, finalArgs, {
-      maxBuffer: 1024 * 1024 * 20,
-      timeout: 120000,
-    });
+    return await runLarkCommand(commandArgs, { timeout: 120000 });
   } catch (error) {
-    const stderr = error.stderr ? `\n${error.stderr}` : "";
-    const stdout = error.stdout ? `\n${error.stdout}` : "";
-    throw new Error(explainLarkError(`${error.message}${stderr}${stdout}`));
+    throw new Error(explainLarkError(collectCommandError(error)));
   }
+}
+
+async function runLarkCommand(args, options = {}) {
+  const command = existsSync(larkCliRunner) ? findNodeExecutable() : "lark-cli";
+  const finalArgs = existsSync(larkCliRunner) ? [larkCliRunner, ...args] : args;
+  return execFileAsync(command, finalArgs, {
+    maxBuffer: 1024 * 1024 * 20,
+    timeout: options.timeout || 120000,
+  });
 }
 
 function findNodeExecutable() {
@@ -280,8 +345,11 @@ function formatDateTime(value) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-function explainLarkError(value) {
+export function explainLarkError(value) {
   const sanitized = sanitizeLarkOutput(value);
+  if (/need_user_authorization|token does not exist|re-login:\s*lark-cli auth login/i.test(sanitized)) {
+    return "飞书用户授权已失效。请打开“连接配置”，点击“重新授权飞书”，完成授权后再重试任务。";
+  }
   if (/91403|you don't have permission|permission/i.test(sanitized)) {
     return [
       "飞书多维表格写入权限不足：当前执行身份可以读取字段/记录，但不能创建、更新或删除记录。",
@@ -291,11 +359,29 @@ function explainLarkError(value) {
   return `lark-cli 执行失败：${sanitized}`;
 }
 
+function explainAuthError(error) {
+  const value = collectCommandError(error);
+  if (/timed out|timeout|expired|authorization_pending/i.test(value)) {
+    return "飞书授权未完成或已超时，请重新点击“重新授权飞书”";
+  }
+  return explainLarkError(value);
+}
+
+function collectCommandError(error) {
+  const stderr = error?.stderr ? `\n${error.stderr}` : "";
+  const stdout = error?.stdout ? `\n${error.stdout}` : "";
+  return `${error?.message || error}${stderr}${stdout}`;
+}
+
 function sanitizeLarkOutput(value) {
   return String(value)
     .replace(/--base-token\s+\S+/g, "--base-token [hidden]")
+    .replace(/--table-id\s+\S+/g, "--table-id [hidden]")
+    .replace(/--view-id\s+\S+/g, "--view-id [hidden]")
     .replace(/--json\s+\{[\s\S]*?\}(?=\n|$)/g, "--json [hidden]")
     .replace(/(base-token|baseToken)[=:]\s*["']?[\w-]+/gi, "$1=[hidden]")
     .replace(/cli_[a-z0-9]+/gi, "cli_[hidden]")
-    .slice(0, 4000);
+    .replace(/ou_[a-z0-9]+/gi, "ou_[hidden]")
+    .replace(/tbl[a-z0-9]+/gi, "tbl_[hidden]")
+    .slice(0, 2000);
 }

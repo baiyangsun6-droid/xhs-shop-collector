@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { addEventClient } from "./events.mjs";
 import { loadConfig, saveConfig } from "./config.mjs";
-import { enqueueAndRun, openLogin, requestStop, retryTask, skipTask, testFeishu } from "./runner.mjs";
+import { authorizeFeishu, enqueueAndRun, openLogin, requestStop, retryTask, skipTask, testFeishu } from "./runner.mjs";
 import { deleteLocalTasks, emitState, selectTask, snapshot, state } from "./state.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -68,6 +68,10 @@ async function handleApi(req, res, url) {
 
   if (req.method === "POST" && url.pathname === "/api/feishu/test") {
     return sendJson(res, 200, await testFeishu(config));
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/feishu/authorize") {
+    return sendJson(res, 200, await authorizeFeishu(config));
   }
 
   if (req.method === "POST" && url.pathname === "/api/xhs/login") {

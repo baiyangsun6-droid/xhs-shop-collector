@@ -155,6 +155,20 @@ export function App() {
     }
   }
 
+  async function authorizeFeishu() {
+    setNotice("正在创建飞书授权请求");
+    try {
+      const result = await api("/api/feishu/authorize", { method: "POST" });
+      if (result.verificationUrl) {
+        window.open(result.verificationUrl, "_blank", "noopener,noreferrer");
+      }
+      setNotice("飞书授权页面已打开，请在页面确认授权");
+      await refreshState();
+    } catch (error) {
+      setNotice(error.message);
+    }
+  }
+
   async function openLogin() {
     try {
       await api("/api/xhs/login", { method: "POST" });
@@ -404,6 +418,7 @@ export function App() {
             appState={appState}
             saveConfig={saveConfig}
             testFeishu={testFeishu}
+            authorizeFeishu={authorizeFeishu}
             openLogin={openLogin}
             saving={saving}
           />
@@ -854,7 +869,7 @@ function Inspector({ task, appState, retryTask, skipTask, deleteTasks, openLogin
   );
 }
 
-function ConnectionsPanel({ config, setConfig, appState, saveConfig, testFeishu, openLogin, saving }) {
+function ConnectionsPanel({ config, setConfig, appState, saveConfig, testFeishu, authorizeFeishu, openLogin, saving }) {
   return (
     <div className="settings-view">
       <section className="settings-panel wide">
@@ -889,6 +904,10 @@ function ConnectionsPanel({ config, setConfig, appState, saveConfig, testFeishu,
           <button className="secondary-button" onClick={testFeishu}>
             <RefreshCw size={16} />
             测试连接
+          </button>
+          <button className="secondary-button" onClick={authorizeFeishu}>
+            <LogIn size={16} />
+            重新授权飞书
           </button>
         </div>
       </section>

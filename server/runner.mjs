@@ -1,5 +1,5 @@
 import { collectCreatorProducts, getBrowserStatus, openLoginBrowser } from "./scraper.mjs";
-import { testFeishuConnection, writeProductsForCreator } from "./lark.mjs";
+import { startFeishuUserAuthorization, testFeishuConnection, writeProductsForCreator } from "./lark.mjs";
 import {
   createTasks,
   log,
@@ -10,13 +10,41 @@ import {
 } from "./state.mjs";
 
 export async function testFeishu(config) {
-  const result = await testFeishuConnection(config);
-  if (result.ok) {
-    setConnection("feishu", "connected", `字段映射正常，共 ${result.fieldCount} 个字段`);
-  } else {
-    setConnection("feishu", "error", `缺少字段：${result.missing.join("、")}`);
+  try {
+    const result = await testFeishuConnection(config);
+    if (result.ok) {
+      setConnection("feishu", "connected", `字段映射正常，共 ${result.fieldCount} 个字段`);
+    } else {
+      setConnection("feishu", "error", `缺少字段：${result.missing.join("、")}`);
+    }
+    return result;
+  } catch (error) {
+    setConnection("feishu", "error", error.message);
+    throw error;
   }
-  return result;
+}
+
+export async function authorizeFeishu(config) {
+  setConnection("feishu", "pending", "等待在飞书页面确认授权");
+  try {
+    return await startFeishuUserAuthorization({
+      onComplete: async () => {
+        try {
+          await testFeishu(config);
+          log("INFO", "飞书用户授权成功，字段检查已通过");
+        } catch (error) {
+          log("ERROR", `飞书授权完成，但连接检查失败：${error.message}`);
+        }
+      },
+      onError: async (error) => {
+        setConnection("feishu", "error", error.message);
+        log("ERROR", error.message);
+      },
+    });
+  } catch (error) {
+    setConnection("feishu", "error", error.message);
+    throw error;
+  }
 }
 
 export async function openLogin() {
@@ -207,6 +235,9 @@ async function runOneTask(task, config) {
       taskId: task.id,
     });
   } catch (error) {
+    if (/飞书用户授权已失效|重新授权飞书/.test(error.message)) {
+      setConnection("feishu", "error", "用户授权已失效，请在连接配置中重新授权");
+    }
     updateTask(task.id, {
       status: "failed",
       step: "执行失败",
